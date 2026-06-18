@@ -1,0 +1,13 @@
+Archived/
+data/*
+!data/README.md
+main/data/
+outputs/
+main/outputs/
+main/AGENTS.md
+main/WORK_SHEET.md
+sim_eval/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.DS_Store

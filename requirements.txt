@@ -1,0 +1,15 @@
+torch>=2.0
+torchvision
+timm
+huggingface_hub
+pyarrow
+pandas
+av
+einops
+numpy
+matplotlib
+scikit-learn
+tqdm
+pillow
+nbformat
+jupyter

@@ -1,0 +1,175 @@
+% CVPR 2023 Paper Template
+\documentclass[10pt,twocolumn,letterpaper]{article}
+
+\usepackage{cvpr}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{booktabs}
+\usepackage{microtype}
+\usepackage[pagebackref,breaklinks,colorlinks]{hyperref}
+\usepackage[capitalize]{cleveref}
+\crefname{section}{Sec.}{Secs.}
+\Crefname{section}{Section}{Sections}
+\Crefname{table}{Table}{Tables}
+\crefname{table}{Tab.}{Tabs.}
+
+\def\cvprPaperID{*****}
+\def\confName{CVPR}
+\def\confYear{2023}
+
+\begin{document}
+
+\title{Demo-Guided Hierarchical JEPA World Models\\with Behavior Cloning Augmentation\\for Robotic Manipulation}
+
+\author{
+Thuong Le \\ 7047428 \and
+Sandhya Badiger \\ 7062941 \and
+Kshitiz Singh \\ 7010584
+}
+\maketitle
+
+%-----------------------------------------------------------------------
+\section{Task and Motivation}
+%-----------------------------------------------------------------------
+
+\noindent\textbf{Task.}
+We address \textbf{action-conditioned latent dynamics modelling} for robotic manipulation using the Robomimic benchmark.
+Given an RGB observation $I_t$ (84$\times$84) and a 7 DoF joint velocity action $a_t$, we learn a world model that predicts the visual state $k$ steps ahead without access to a live simulator:
+\begin{equation}
+  \hat{z}_{t+k} = f_\theta\!\bigl(\mathrm{enc}(I_t),\,a_t\bigr) \approx \mathrm{enc}(I_{t+k}),
+\end{equation}
+where $\mathrm{enc}(\cdot)$ is \textbf{frozen DINOv2 ViT S/14}~\cite{dinov2} (22M params, fp16, no gradients), outputting a 384-dimensional CLS embedding $z_t$.
+The predictor $f_\theta$ is trained entirely in embedding space, following the JEPA principle~\cite{ijepa} of predicting representations rather than raw pixels~\cite{ho2022videodiffusion,he2022mae}.
+All frames are pre-embedded offline and cached as \texttt{.pt} files so DINOv2 never runs during training and peak VRAM stays under 2\,GB.
+
+\noindent\textbf{Motivation.}
+JEPAs~\cite{ijepa} have recently been extended to action-conditioned world models-DINO-WM~\cite{dino_wm}, JEPA-WMs~\cite{jepawms}, V-JEPA~2-AC~\cite{vjepa2}-that predict future visual features from frozen encoders and enable zero-shot planning without reward labels or pixel reconstruction.
+Despite this progress, three key gaps remain.
+First, flat CEM planning struggles with \textbf{long-horizon manipulation}: errors compound over many autoregressive steps.
+Recent hierarchical approaches~\cite{ffjepa,zhang2026hierarchical} decompose planning into subgoal-conditioned short-horizon problems, but do not exploit the natural phase structure of manipulation tasks (reach $\to$ grasp $\to$ lift $\to$ place), and neither evaluates on standardised benchmarks.
+Second, JEPA world models and behavior cloning are treated as \textbf{independent paradigms}: no prior work explores whether a JEPA predictor can serve as a data augmentation engine to improve BC training.
+Third, all existing JEPA predictors~\cite{ijepa,vjepa,mcjepa} use a \textbf{single final-layer loss}, encouraging near-identity predictions for slow-motion scenes (embedding stationarity).
+REPA~\cite{repa} showed that aligning intermediate hidden states with pretrained encoder features dramatically improves training, a principle never applied to dynamics predictors.
+
+We address all three gaps on Robomimic~\cite{robomimic2021} (Lift, Can, Square), combining: (1)~\textbf{demo-guided subgoal extraction} and hierarchical CEM planning, (2)~\textbf{JEPA-augmented behavior cloning}, and (3)~\textbf{REPA-style intermediate alignment} adapted to JEPA predictors.
+
+\noindent\textbf{Related Work.}
+DINO-WM~\cite{dino_wm}, JEPA-WMs~\cite{jepawms}, V-JEPA~2-AC~\cite{vjepa2}, and PiJEPA~\cite{pijepa} are action-conditioned JEPA planners evaluated on custom tasks; FF-JEPA~\cite{ffjepa} and Zhang et al.~\cite{zhang2026hierarchical} add hierarchical planning---none evaluate on Robomimic.
+Dreamer~\cite{dreamer} and TD-MPC~\cite{tdmpc} learn latent dynamics but require live simulation; R3M~\cite{r3m}, MVP~\cite{mvp}, and VC-1~\cite{vc1} train BC on frozen encoders on Robomimic; REPA~\cite{repa} aligns diffusion transformer layers with encoder features---we adapt this to JEPA dynamics predictors.
+
+\noindent\textbf{Challenges.}
+(1)~\emph{Embedding stationarity}: consecutive DINOv2 embeddings are nearly identical for slow motions; addressed with REPA-style intermediate alignment.
+(2)~\emph{Horizon drift}: prediction errors compound in $K$-step autoregressive rollouts.
+(3)~\emph{Subgoal quality}: automatically extracted subgoals must correspond to meaningful phase transitions.
+(4)~\emph{Synthetic data quality}: JEPA-generated trajectories may drift off-distribution, harming BC training if not filtered.
+
+%-----------------------------------------------------------------------
+\section{Goals}
+%-----------------------------------------------------------------------
+
+\noindent
+\textbf{G1} Establish MLP and Transformer predictor baselines ($K{=}1$, Lift) with identity predictor upper bound, mean predictor lower bound, and oracle reference.
+\textbf{G2} Train the Transformer on Lift for $K\!\in\!\{1,5,10,20\}$; evaluate rollout drift for context windows $T\!\in\!\{1,2,4,8\}$.
+\textbf{G3} Implement demo-guided subgoal extraction using gripper state changes and action velocity peaks; train a subgoal predictor (MLP or 2-layer Transformer) on extracted subgoals.
+\textbf{G4} Deploy hierarchical CEM on held-out Lift episodes; compare against flat CEM on MRR, Success@K, and latent distance reduction. Ablate $h\!\in\!\{5,10\}$ and $W_G\!\in\!\{1,2,3\}$.
+\textbf{G5} Generate synthetic embedding trajectories from perturbed states; train BC policies on real plus synthetic data with mix ratios $\alpha\!\in\!\{0.0,0.25,0.5,0.75,1.0\}$.
+\textbf{G6} Test Lift-trained predictor zero-shot on Can; produce a cross-task transfer heatmap across Lift, Can, and Square.
+\textbf{G7} Produce a controlled 4-way comparison: flat CEM, hierarchical CEM, pure BC, and JEPA-augmented BC, benchmarked against VC-1~\cite{vc1} frozen-DINOv2 BC baselines.
+\textbf{G8} Ablate REPA alignment with vs.\ without $\mathcal{L}_\text{REPA}$ and $\lambda\!\in\!\{0.1,0.3,0.5\}$; measure effect on cosine similarity, rollout drift, and CEM success.
+
+\begin{table}[h]\centering\small\setlength{\tabcolsep}{3pt}
+\begin{tabular}{@{}p{0.5cm}p{3.8cm}p{2.6cm}@{}}
+\toprule
+\textbf{No} & \textbf{Milestone} & \textbf{Deliverable}\\
+\midrule
+1 & Predictor baselines, $K$ sweep, REPA ablation & Cos sim plots, drift curves\\
+2 & Subgoal extraction, hierarchical CEM & Subgoal viz, planning metrics\\
+3 & JEPA-augmented BC, 4-way comparison & BC table, transfer heatmap\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+%-----------------------------------------------------------------------
+\section{Methods}
+%-----------------------------------------------------------------------
+
+\noindent\textbf{MLP Predictor.}
+Concatenate $z_t\!\in\!\mathbb{R}^{384}$ with normalised $a_t\!\in\!\mathbb{R}^{7}$; pass through hidden layers $[512,256]$ to a 384-dimensional output head (${\approx}500$K params).
+Loss: $\mathcal{L}=1-\cos(\hat{z}_{t+k},z_{t+k})$; AdamW, lr$=10^{-4}$, wd$=0.05$, 500-step warmup with cosine decay, fp16, batch 64, 50 epochs.
+
+\noindent\textbf{Transformer Predictor.}
+Project $z_t$ via \texttt{Linear}(384,256); encode $a_t$ through \textbf{Action MLP} ($\mathbb{R}^7\!\to\!128$) yielding $a_\text{embed}\!\in\!\mathbb{R}^{128}$; add sinusoidal PE. Feed $T$ tokens to a \textbf{causal Transformer Encoder} (4 layers, $d_\text{model}=256$, 4 heads); predict via \texttt{Linear}(256,384):
+\begin{align}
+x_t &= \mathrm{Lin}_{384\to256}(z_t)+\mathrm{ActionMLP}(a_t)+\mathrm{PE}(t),\\
+\hat{z}_{t+k} &= \mathrm{Lin}_{256\to384}\!\bigl(\mathrm{CausalTF}(x_{t-T+1:t})\bigr).
+\end{align}
+Context $T\!\in\!\{1,2,4,8\}$ ablated. Peak VRAM ${\approx}1.8$\,GB (ViT S) / ${\approx}2.5$\,GB (ViT B).
+
+\noindent\textbf{REPA-Style Intermediate Alignment.}
+Attach $\pi_l\!=\!\mathrm{Linear}(d_\text{model},384)$ to each intermediate predictor layer; minimise alignment with cached DINOv2 features $f^{(l)}$:
+\begin{equation}
+\mathcal{L}_\text{REPA} = \sum_{l=1}^{L-1}\!\bigl(1-\cos(\pi_l(h^{(l)}),f^{(l)})\bigr), \quad \mathcal{L} = \mathcal{L}_\text{main}+\lambda\,\mathcal{L}_\text{REPA}.
+\end{equation}
+Projection heads (${\approx}300$K params) are discarded at inference; $\lambda\!\in\!\{0.1,0.3,0.5\}$ ablated.
+
+\noindent\textbf{Demo-Guided Subgoal Extraction.}
+Detect phase boundaries via gripper transitions (threshold on $\dot{\texttt{gripper\_qpos}}$) and velocity peaks (local maxima in $\|a_t\|_2$), merged with a 10-frame gap, yielding 2--5 subgoals per episode. Train subgoal predictor $G_\phi$ (MLP or 2-layer Transformer): $\hat{z}_{sg,m+1} = G_\phi(z_{sg,m-W_G+1:m})$.
+
+\noindent\textbf{Hierarchical CEM Planner.}
+Given $z_t$: (1)~predict subgoal $\hat{z}_{sg}\!=\!G_\phi(z_t)$; (2)~short-horizon CEM ($h\!\in\!\{5,10\}$ steps, $N{=}128$, 10\% elite, 5 iters) minimising $1-\cos(\hat{z}_{t+h},\hat{z}_{sg})$; (3)~execute, observe $z_{t+h}$, repeat.
+
+\noindent\textbf{JEPA-Augmented BC.}
+For each $z_0$, sample $N_\text{perturb}{=}10$ perturbed embeddings $z_0'\!=\!z_0\!+\!\epsilon$, $\epsilon\!\sim\!\mathcal{N}(0,\sigma^2 I)$; roll out predictor with expert actions to get synthetic $(z_t',a_t)$ pairs; train BC policy on real plus synthetic at mix ratio $\alpha$.
+
+\noindent\textbf{Novelty.}
+(1)~First hierarchical JEPA planning on Robomimic. (2)~Demo-guided subgoal extraction via manipulation phase structure. (3)~JEPA predictor as BC data augmentation engine. (4)~Controlled 4-way CEM / hierarchical CEM / BC / JEPA-BC comparison. (5)~REPA intermediate alignment adapted to dynamics predictors.
+
+%-----------------------------------------------------------------------
+\section{Datasets}
+%-----------------------------------------------------------------------
+
+\noindent\textbf{Robomimic}~\cite{robomimic2021} proficient human (ph) splits, downloaded via HuggingFace in LeRobot\,v2.1 format.
+Each HDF5 episode provides \texttt{obs/agentview\_image} and \texttt{obs/robot0\_eye\_in\_hand\_image} (both 84$\times$84 RGB), \texttt{robot0\_joint\_pos} (6 DoF), \texttt{robot0\_gripper\_qpos}, \texttt{actions}, and \texttt{donelast} flags.
+Frames subsampled to 10\,Hz; triplets $(I_t,a_t,I_{t+k})$ for $k\!\in\!\{1,5,10,20\}$; 160/40 train and val split; actions zero mean unit variance normalised.
+
+\begin{table}[h]\centering\small\setlength{\tabcolsep}{3pt}
+\begin{tabular}{@{}lllll@{}}
+\toprule
+\textbf{Task} & \textbf{Demos} & \textbf{Frames} & \textbf{Difficulty} & \textbf{Role}\\
+\midrule
+Lift   & 200 & $\sim$9.7k & Easy   & Primary train/eval\\
+Can    & 200 & $\sim$12k  & Medium & Generalisation eval\\
+Square & 200 & $\sim$14k  & Hard   & Final stress test\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+%-----------------------------------------------------------------------
+\section{Evaluation}
+%-----------------------------------------------------------------------
+
+\noindent\textbf{Prediction metrics.}
+Primary: cosine similarity $\cos(\hat{z},z^*)$ normalised between identity predictor (upper bound) and mean predictor (lower bound); rollout drift (cosine similarity vs.\ step $k$).
+
+\noindent\textbf{Planning and BC metrics.}
+MRR, Success@K, and latent distance reduction $d(\hat{z}_{t+H},z_g)/d(z_t,z_g)$; flat CEM, hierarchical CEM, and random shooting vs.\ demo actions (upper) and Gaussian noise (lower); action MSE vs.\ VC-1~\cite{vc1} BC baselines.
+
+\noindent\textbf{Ablation axes.}
+(1)~Architecture: MLP vs.\ Transformer, depth $\{1,2,4,6\}$; (2)~context $T\!\in\!\{1,2,4,8\}$; (3)~action grounding: $a_t$ / zero / rand; (4)~loss: cosine / smooth L1 / InfoNCE; (5)~encoder: DINOv2 S / B; (6)~CEM: $h\!\in\!\{5,10\}$, $W_G\!\in\!\{1,2,3\}$, MLP vs.\ Transformer subgoal predictor; (7)~BC mix $\alpha\!\in\!\{0,0.25,0.5,0.75,1\}$, $\sigma\!\in\!\{0.01,0.05,0.1\}$; (8)~REPA $\lambda\!\in\!\{0.1,0.3,0.5\}$.
+
+\noindent\textbf{Qualitative visualisations.}
+t\text{-}SNE of predicted vs.\ actual embeddings; subgoal detection visualisation; $K$-step rollout decoded via nearest neighbour; hierarchical vs.\ flat planning trajectories in embedding space.
+
+\noindent\textbf{Risk mitigation.}
+Stationary embeddings: $K{=}10,20$. Overfitting: dropout 0.2. Weak CEM: increase $N$, constrain to demo distribution. Undiscriminative encoder: ViT B. Bad subgoals: adjust gap. Synthetic drift: filter by confidence. REPA hurts: reduce $\lambda$.
+
+\noindent\textbf{GPU Resources (Appendix).}
+Primary: NVIDIA RTX 3070 Ti 8\,GB. Peak VRAM ${\approx}2$\,GB. Estimated 88 GPU hours (${\approx}$3.5 days).
+
+{\small
+\bibliographystyle{ieee_fullname}
+\bibliography{references}
+}
+
+\end{document}
